@@ -15,7 +15,6 @@ const NewBook = ({addBook, show}) => {
     e.preventDefault()
 
     const publishedNum = parseInt(published)
-    console.log('typeof published', typeof(parseInt(published)))
     await addBook({
       variables: {title, author, published: publishedNum, genres}
     })

@@ -14,7 +14,7 @@ const LoginForm = ({login, setToken}) => {
     if (result) {
       const token = result.data.login.value
       setToken(token)
-      localStorage.setItem('phonenumbers-user-token', token)
+      localStorage.setItem('books-user-token', token)
     }
 
     setUsername('')

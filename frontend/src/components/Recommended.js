@@ -1,20 +1,14 @@
 import React from 'react'
 
-const Recommended = ({loading, data, show, userResult}) => {
+const Recommended = ({loading, data, show}) => {
 
   if (!show) {
     return null;
   }
 
-  console.log('data in Recommended', data)
   if (!data || loading) {
-    console.log('loading')
     return <div>loading...</div>
   }
-
-  // const userFavGenre = userResult.data.me.favoriteGenre
-
-  // const booksByGenre = booksResult.data.allBooks.filter(book => book.genres.find(e => e === userFavGenre) === userFavGenre)
 
   return (
     <div>

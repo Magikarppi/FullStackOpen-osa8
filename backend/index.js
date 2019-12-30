@@ -1,8 +1,12 @@
-const { ApolloServer, UserInputError, AuthenticationError, gql } = require('apollo-server');
+const { ApolloServer, UserInputError, AuthenticationError, gql, PubSub } = require('apollo-server');
 const mongoose = require('mongoose');
 // const uuidv1 = require('uuid/v1');
 require('dotenv').config();
 const jwt = require('jsonwebtoken')
+const DataLoader = require('dataloader')
+
+
+const pubsub = new PubSub()
 
 const JWT_SECRET = 'secret'
 
@@ -84,7 +88,26 @@ const typeDefs = gql`
       password: String!
     ): Token
   }
+
+  type Subscription {
+    bookAdded: Book!
+  }
+
 `;
+
+const bookLoader = new DataLoader(async bookIds => {
+  const allBooks = await Book.find({ author: { $in: bookIds } })
+  let authorBooks = []
+  allBooks.map(book => {
+    if (!authorBooks[book.author]) {
+      authorBooks[book.author] = []
+    }
+    authorBooks[book.author] = authorBooks[book.author].concat(book)
+  })
+  console.log(authorBooks)
+  const books = bookIds.map(author => authorBooks[author])
+  return books
+})
 
 const resolvers = {
   Query: {
@@ -92,29 +115,20 @@ const resolvers = {
       return context.currentUser
     },
     bookCount: async (root) => {
-      console.log('root in bookCount', root);
       console.log('book.collectoin', await Book.collection.countDocuments());
-      const books = await Book.find({ author: root.name });
-      console.log('books in bookCount query', books);
+      const books = await Book.find({ author: root.name }).populate("author");
       return books.length;
-      // Book.collection.countDocuments()
     },
     authorCount: () => Author.collection.countDocuments(),
     allBooks: async (root, args) => {
       console.log('args in allbooks', args);
       if (!Object.keys(args).length) {
-        const books = await Book.find({}).populate("author", {
-          name: 1,
-          born: 1
-        });
+        const books = await Book.find({}).populate("author genre");
         return books;
       }
 
       if (args.author && args.genre) {
-        const authorsBooks = await Book.find({ author: args.author }).populate("author", {
-          name: 1,
-          born: 1
-        });
+        const authorsBooks = await Book.find({ author: args.author }).populate("author genre");
         // const authorsBooks = books.filter(
         //   (book) => book.author === args.author
         // );
@@ -125,31 +139,14 @@ const resolvers = {
       }
 
       if (args.author) {
-        console.log('args', args);
-        // console.log(books.filter((book) => book.author === args.author));
-        // return books.filter((book) => book.author === args.author);
-        return Book.find({ author: args.author }).populate("author", {
-          name: 1,
-          born: 1
-        });
+        return Book.find({ author: args.author }).populate("author genre");
       }
 
-      if (args.genre) {
-        // return books.filter((book) =>
-        //   book.genres.find((genre) => genre === args.genre)
-        // );
-        // const books = await Book.find({}).populate("author", {
-        //   name: 1,
-        //   born: 1
-        // });
-        console.log('if args.genre')
-        
+      if (args.genre) {      
         const books = await Book.find({}).populate("author genre");
-        console.log('books g', books);
         const filteredBooks = books.filter((book) =>
         book.genres.find((genre) => genre === args.genre)
       );
-      console.log('filteredBooks in allBooks', filteredBooks)
         return filteredBooks
       }
     },
@@ -158,35 +155,27 @@ const resolvers = {
       return authors
     }
   },
-  // Author: {
-  //   bookCount: async (root) => {
-  //     console.log('root in Author:', root);
-  //     const books = await Book.find({ author: root.name });
-  //     console.log('books in Author', books);
-  //     // const filteredBooks = books.filter((book) => book.author === root.name)
-  //     // console.log('filteredBooks', filteredBooks)
-  //     return books.length;
-  //   }
-  // },
+  Author: {
+    bookCount: async (root, args, context) => {
+      const books = await context.bookLoader.load(root._id)
+      return books.length
+    }
+  },
   Mutation: {
     addBook: async (root, args, context) => {
       console.log('args in addbook', args)
       const author = await Author.findOne({ name: args.author });
-      console.log('author in addbook', author)
       const currentUser = context.currentUser
 
       if (!currentUser) {
         throw new AuthenticationError("not authenticated")
       }
 
-      console.log('addBook continues with currentuser', currentUser)
       if (!author) {
-        console.log('author not found');
         const newAuthor = new Author({
           name: args.author,
           born: null
         });
-        console.log('newAuthor', newAuthor);
 
         try {
           await newAuthor.save();
@@ -197,7 +186,6 @@ const resolvers = {
         }
         // const book = new Book({ ...args, id: uuidv1(), author: newAuthor });
         const book = new Book({ ...args, author: newAuthor });
-        console.log('book in addBook', book)
         try {
           await book.save();
         } catch (error) {
@@ -205,12 +193,13 @@ const resolvers = {
             invalidArgs: args
           });
         }
+        pubsub.publish('BOOK_ADDED', { bookAdded: book })
+
         return book;
       }
 
       const book = new Book({ ...args, author: author });
       // const book = new Book({ ...args, id: uuidv1(), author: author });
-      console.log('book in addBook', book)
       try {
         await book.save();
       } catch (error) {
@@ -218,42 +207,12 @@ const resolvers = {
           invalidArgs: args
         });
       }
-      return book;
+      pubsub.publish('BOOK_ADDED', { bookAdded: book })
 
-      // const authors = await Author.find({});
-      // console.log('authors in addbook', authors);
-      // console.log('args in addbook', args);
-      // if (!authors.find((author) => author.name === args.author)) {
-      //   console.log('Author not found')
-      //   const newAuthor = new Author({
-      //     name: args.author,
-      //     id: uuidv1(),
-      //     born: null
-      //   });
-      //   // authors = [...authors, newAuthor];
-      //   await newAuthor.save();
-      //   const book = new Book({
-      //     title: args.title,
-      //     author: newAuthor,
-      //     published: args.published,
-      //     genres: args.genres,
-      //     id: uuidv1()
-      //   });
-      //   // books = books.concat(book);
-      //   await book.save();
-      //   return book;
-      // } else {
-      //   const book = new Book({ ...args, id: uuidv1() });
-      //   // books = books.concat(book);
-      //   await book.save();
-      //   return book;
-      // }
+      return book;
     },
     editAuthor: async (root, args, context) => {
-      console.log('args', args);
-      // const authorForEdit = authors.find(
-      //   (author) => author.name === args.name
-      // );
+
       const authorForEdit = await Author.findOne({ name: args.name });
 
       const currentUser = context.currentUser
@@ -264,11 +223,6 @@ const resolvers = {
 
       if (authorForEdit) {
         authorForEdit.born = args.setBornTo;
-        // const authorEdited = new Author ({
-        //   ...authorForEdit,
-        //   born: args.setBornTo
-        // });
-        // authors = authors.map(author => author.name !== args.name ? author : authorEdited)
         try {
           await authorForEdit.save();
         } catch (error) {
@@ -307,6 +261,11 @@ const resolvers = {
   
       return { value: jwt.sign(userForToken, JWT_SECRET) }
     },
+  },
+  Subscription: {
+    bookAdded: {
+      subscribe: () => pubsub.asyncIterator(['BOOK_ADDED'])
+    }
   }
 };
 
@@ -320,7 +279,7 @@ const server = new ApolloServer({
         auth.substring(7), JWT_SECRET
       )
       const currentUser = await User.findById(decodedToken.id)
-      return { currentUser }
+      return { currentUser, bookLoader }
     }
   }
 });

@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { useQuery, useMutation, useApolloClient, useLazyQuery } from '@apollo/react-hooks';
+import {
+  useQuery,
+  useMutation,
+  useApolloClient,
+  useLazyQuery,
+  useSubscription
+} from '@apollo/react-hooks';
 import { gql } from 'apollo-boost';
 
 import Authors from './components/Authors';
 import Books from './components/Books';
 import NewBook from './components/NewBook';
 import LoginForm from './components/LoginForm';
-import Recommended from './components/Recommended'
+import Recommended from './components/Recommended';
 
 const ALL_AUTHORS = gql`
   {
@@ -27,6 +33,7 @@ const ALL_BOOKS = gql`
       author {
         name
         born
+        id
       }
       id
       genres
@@ -87,41 +94,53 @@ const USER = gql`
       favoriteGenre
     }
   }
-`
+`;
 
 const GENRE_BOOKS = gql`
-  query fetchGenre ($genre: String) { 
-    allBooks(
-    genre: $genre
-  ) {
-    title
-    author {
-      name
-      born
+  query fetchGenre($genre: String) {
+    allBooks(genre: $genre) {
+      title
+      author {
+        name
+        born
+        id
+      }
+      published
+      id
     }
-    published
-    id
   }
-}
-`
+`;
 
-const App = ( {client} ) => {
+const BOOK_ADDED = gql`
+  subscription {
+    bookAdded {
+      title
+      published
+      author {
+        name
+        born
+        id
+      }
+      id
+      genres
+    }
+  }
+`;
+
+const App = () => {
   const [page, setPage] = useState('authors');
   const [errorMessage, setErrorMessage] = useState(null);
   const [token, setToken] = useState(null);
-  const [user, setUser] = useState(null);
-  const [booksToShow, setBooksToShow] = useState(null);
 
   useEffect(() => {
-    const userToken = window.localStorage.getItem('phonenumbers-user-token');
-    console.log('userToken', userToken)
+    const userToken = window.localStorage.getItem('books-user-token');
+    console.log('userToken', userToken);
     if (userToken) {
-      // const user = JSON.parse(loggedUserJSON);
       setToken(userToken);
     }
   }, []);
 
-  // const client = useApolloClient()
+  const client = useApolloClient();
 
   const handleError = (error) => {
     console.log('error:', error);
@@ -132,39 +151,17 @@ const App = ( {client} ) => {
   };
 
   const authorsResult = useQuery(ALL_AUTHORS);
-  const booksResult = useQuery(ALL_BOOKS, );
+  const booksResult = useQuery(ALL_BOOKS);
   const userResult = useQuery(USER);
 
-  // const booksByUsersGenre = useQuery(GENRE_BOOKS, {
-  //     variables: { genre: userResult.data.me.favoriteGenre}
-  //   })
-
-    const [booksByUsersGenre, { called, loading, data }] = useLazyQuery(GENRE_BOOKS,)
-
-    console.log('booksbyusersgenre called', called === true)
-    console.log('booksByUsersGenre', booksByUsersGenre)
-
-    // useEffect(() => {
-    //   booksByUsersGenre( {variables: { genre: userResult.data.me.favoriteGenre}})
-    //   // booksByUsersGenre( {variables: { genre: "horror"}})
-
-    // }, [userResult.loading, booksByUsersGenre])
-
-
-    console.log('data', data)
-    // if (data && data.allBooks) {
-    //   setBooksToShow(data.allBooks);
-    // }
-  
-
-
-  console.log('authorsResult', authorsResult);
-  console.log('booksresult', booksResult);
+  const [booksByUsersGenre, { loading, data }] = useLazyQuery(
+    GENRE_BOOKS
+  );
 
   const [addBook] = useMutation(ADD_BOOK, {
     onError: handleError,
     refetchQueries: [{ query: ALL_AUTHORS }, { query: ALL_BOOKS }],
-    fetchPolicy: "no-cache"
+    fetchPolicy: 'no-cache'
   });
 
   console.log('addBook mut:', addBook);
@@ -178,115 +175,99 @@ const App = ( {client} ) => {
     onError: handleError
   });
 
+  const updateCacheWith = (addedBook) => {
+    const includedIn = (set, object) =>
+      set.map((p) => p.id).includes(object.id);
+
+    const dataInStore = client.readQuery({ query: ALL_BOOKS });
+    if (!includedIn(dataInStore.allBooks, addedBook)) {
+      client.writeQuery({
+        query: ALL_BOOKS,
+        data: { allBooks: dataInStore.allBooks.concat(addedBook) }
+      });
+    }
+  };
+  useSubscription(BOOK_ADDED, {
+    onSubscriptionData: ({ subscriptionData }) => {
+      const addedBook = subscriptionData.data.bookAdded;
+      window.alert(`${addedBook.title} added`);
+      updateCacheWith(addedBook);
+    }
+  });
+
   const logout = () => {
-    console.log('log out runs')
     setToken(null);
     localStorage.clear();
     client.resetStore();
   };
 
-  // if (!token) {
-  //   return (
-  //     <div>
-  //       {errorMessage}
-  //       <h2>Login</h2>
-  //       <LoginForm login={login} setToken={(token) => setToken(token)} />
-  //     </div>
-  //   );
-  // }
-
   const handleRecommendations = async () => {
-    console.log('userResult', userResult)
-    booksByUsersGenre( {variables: { genre: userResult.data.me.favoriteGenre}})
-    console.log('lazyQuery has run in handleRecommendations')
-    console.log('booksbyUsersGenre.data', booksByUsersGenre.data)
-    setPage('rec')
-  }
-
-  // const handleGenreFilter = (genre) => {
-  //   console.log('genre in handleGenre', genre)
-    
-  // }
+    booksByUsersGenre({
+      variables: { genre: userResult.data.me.favoriteGenre }
+    });
+    setPage('rec');
+  };
 
   const loggedInDisplay = () => {
     return (
       <div>
         <div>
-        <button onClick={() => setPage('authors')}>authors</button>
+          <button onClick={() => setPage('authors')}>authors</button>
           <button onClick={() => setPage('books')}>books</button>
           <button onClick={() => setPage('add')}>add book</button>
-          <button onClick={() => handleRecommendations()}>recommendations</button>
+          <button onClick={() => handleRecommendations()}>
+            recommendations
+          </button>
           <button onClick={() => logout()}>log out</button>
         </div>
-              {errorMessage && <div style={{ color: 'red' }}>{errorMessage}</div>}
-  
-              <Authors
-                show={page === 'authors'}
-                authorsResult={authorsResult}
-                setBornMut={setBornMut}
-              />
-        
-              <Books show={page === 'books'} booksResult={booksResult} />
-        
-              <NewBook show={page === 'add'} addBook={addBook} />
+        {errorMessage && <div style={{ color: 'red' }}>{errorMessage}</div>}
 
-              <Recommended show={page === 'rec'} userResult={userResult} loading={loading} data={data} />
+        <Authors
+          show={page === 'authors'}
+          authorsResult={authorsResult}
+          setBornMut={setBornMut}
+        />
+
+        <Books show={page === 'books'} booksResult={booksResult} />
+
+        <NewBook show={page === 'add'} addBook={addBook} />
+
+        <Recommended
+          show={page === 'rec'}
+          userResult={userResult}
+          loading={loading}
+          data={data}
+        />
       </div>
-    )
-  }
+    );
+  };
 
   const loggedOutDisplay = () => {
     return (
       <div>
-      <div>
-        {errorMessage}
-        <h2>Login</h2>
-        <LoginForm login={login} setToken={(token) => setToken(token)} />
-      </div>
         <div>
-        <button onClick={() => setPage('authors')}>authors</button>
-            <button onClick={() => setPage('books')}>books</button>
+          {errorMessage}
+          <h2>Login</h2>
+          <LoginForm login={login} setToken={(token) => setToken(token)} />
         </div>
-                      {errorMessage && <div style={{ color: 'red' }}>{errorMessage}</div>}
-    
-                      <Authors
-                        show={page === 'authors'}
-                        authorsResult={authorsResult}
-                        setBornMut={setBornMut}
-                      />
-                
-                      <Books show={page === 'books'} booksResult={booksResult} />
+        <div>
+          <button onClick={() => setPage('authors')}>authors</button>
+          <button onClick={() => setPage('books')}>books</button>
+        </div>
+        {errorMessage && <div style={{ color: 'red' }}>{errorMessage}</div>}
+
+        <Authors
+          show={page === 'authors'}
+          authorsResult={authorsResult}
+          setBornMut={setBornMut}
+        />
+
+        <Books show={page === 'books'} booksResult={booksResult} />
       </div>
-    )
-  }
+    );
+  };
 
-  return (
-    <div>
-      {token ? loggedInDisplay() : loggedOutDisplay()}
-    </div>
-  )
-//   return (
-//     <div>
-//       <div>
-//         <button onClick={() => setPage('authors')}>authors</button>
-//         <button onClick={() => setPage('books')}>books</button>
-//         <button onClick={() => setPage('add')}>add book</button>
-//         {token ? <button onClick={() => logout()}>log out</button> : null}
-//       </div>
-
-//       {errorMessage && <div style={{ color: 'red' }}>{errorMessage}</div>}
-
-//       <Authors
-//         show={page === 'authors'}
-//         authorsResult={authorsResult}
-//         setBornMut={setBornMut}
-//       />
-
-//       <Books show={page === 'books'} booksResult={booksResult} />
-
-//       <NewBook show={page === 'add'} addBook={addBook} />
-//     </div>
-//   );
+  return <div>{token ? loggedInDisplay() : loggedOutDisplay()}</div>;
 };
 
 export default App;

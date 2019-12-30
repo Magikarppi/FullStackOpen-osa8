@@ -4,13 +4,11 @@ const Authors = ({ authorsResult, show, setBornMut }) => {
   const [name, setName] = useState('');
   const [born, setBorn] = useState('');
 
-  console.log('authorsResult:', authorsResult);
   if (!show) {
     return null;
   }
 
   if (authorsResult.loading) {
-    console.log('loading');
     return <div>loading...</div>;
   }
 
@@ -19,7 +17,6 @@ const Authors = ({ authorsResult, show, setBornMut }) => {
   }
 
   const authors = [...authorsResult.data.allAuthors];
-  console.log('authors in Authors', authors);
 
   const submit = async (event) => {
     event.preventDefault();
